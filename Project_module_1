@@ -29,27 +29,28 @@ CREATE SCHEMA IF NOT EXISTS car_shop
 ;
 CREATE TABLE car_shop.persons (
 	id serial PRIMARY KEY, 
-	person_name character varying(70) NOT NULL UNIQUE,  
-	phone character varying(30) NOT NULL                       
+	person_name character varying(70) NOT NULL UNIQUE,  -- стандартные фвмилии и имена не более 70 символов 
+	phone character varying(30) NOT NULL                -- не существует номеров телефонов, даже с добавычными номерами более 30 символов        
 )
 ;
 CREATE TABLE car_shop.discounts (
 	id serial PRIMARY KEY,
-	discount_percentage smallint NOT NULL DEFAULT 0 CHECK(discount_percentage >= 0)  
+	discount_percentage smallint NOT NULL DEFAULT 0 CHECK(discount_percentage >= 0)  -- процент скидки по умолчанию выставляем в 0 , поле не может содержать пустого значения
 )
 ;
 CREATE TABLE car_shop.countrys (
 	id serial PRIMARY KEY,
-	name character varying(70) NOT NULL UNIQUE  
+	name character varying(70) NOT NULL UNIQUE  -- не существет названий стран больше 70 символов, пожтому указываем данный тип
+)
 ;
 CREATE TABLE car_shop.colors (
 	id serial PRIMARY KEY,
-	name character varying(30) NOT NULL UNIQUE 
+	name character varying(30) NOT NULL UNIQUE  -- не существует цветов и даже сочетаний цветов больше 30 символов, каждый цвет уникален
 )
 ;
 CREATE TABLE car_shop.brands (
 	id serial PRIMARY KEY,
-	name character varying(25) NOT NULL UNIQUE,
+	name character varying(25) NOT NULL UNIQUE,        -- не существует брендов машин более 25 символов, каждый бренд уникален
 	country_id integer REFERENCES car_shop.countrys(id)
 )
 ;
@@ -60,7 +61,7 @@ CREATE TABLE car_shop.gasoline_consumption (
 ;
 CREATE TABLE car_shop.cars (
 	id serial PRIMARY KEY, 
-	model character varying(25) NOT NULL UNIQUE, 
+	model character varying(25) NOT NULL UNIQUE,        -- не существует моделей машин больше 25 символов, каждая модель в пределах таблицы уникальна
 	brand_id integer REFERENCES car_shop.brands,
 	color_id integer REFERENCES car_shop.colors,
 	gasoline_id integer REFERENCES car_shop.gasoline_consumption
@@ -72,11 +73,8 @@ CREATE TABLE car_shop.sales (
 	date date NOT NULL, 
 	person_id integer REFERENCES car_shop.persons,
 	discount_id integer REFERENCES car_shop.discounts,
-	brand_id integer REFERENCES car_shop.brands,
 	model_id integer REFERENCES car_shop.cars
-);
-
-ALTER TABLE car_shop.sales ADD COLUMN model_id integer
+)
 ;
 -- Наполнение таблиц.
 INSERT INTO car_shop.persons (person_name, phone)
@@ -126,18 +124,16 @@ LEFT JOIN car_shop.colors AS csc ON SPLIT_PART(rds.auto, ',', -1) = csc.name
 LEFT JOIN car_shop.gasoline_consumption AS csg ON rds.gasoline_consumption = csg.gasoline
 ORDER BY models ASC
 ;
-INSERT INTO car_shop.sales(price, date, person_id, discount_id, brand_id, model_id)
+INSERT INTO car_shop.sales(price, date, person_id, discount_id, model_id)
 SELECT 
 	rds.price,
 	rds.date,
 	csp.id,
 	csd.id,
-	csb.id,
 	csc.id
 FROM raw_data.sales AS rds
 LEFT JOIN car_shop.persons AS csp ON rds.person_name = csp.person_name
 LEFT JOIN car_shop.discounts AS csd ON rds.discount = csd.discount_percentage
-LEFT JOIN car_shop.brands AS csb ON  SPLIT_PART(rds.auto, ' ', 1) = csb.name
 LEFT JOIN car_shop.cars AS csc ON RTRIM(SPLIT_PART(rds.auto, ' ', 2),',') = csc.model
 ORDER BY date DESC
 ;
@@ -152,7 +148,8 @@ SELECT
 	   EXTRACT(YEAR FROM date) AS year,
 	   ROUND(AVG(css.price), 2) AS price_avg
 FROM car_shop.sales AS css 
-LEFT JOIN car_shop.brands AS csb ON css.brand_id = csb.id
+LEFT JOIN car_shop.cars AS csc ON css.model_id = csc.id
+LEFT JOIN car_shop.brands AS csb ON csc.brand_id = csb.id
 GROUP BY csb.name, year
 ORDER BY csb.name, year
 ;
@@ -161,7 +158,8 @@ SELECT
 	   EXTRACT(YEAR from date) AS year,
 	   ROUND(AVG(price),2) AS price_avg
 FROM car_shop.sales AS css 
-LEFT JOIN car_shop.brands AS csb ON csb.id=css.brand_id
+LEFT JOIN car_shop.cars AS csc ON css.model_id = csc.id
+LEFT JOIN car_shop.brands AS csb ON csc.brand_id = csb.id
 LEFT JOIN car_shop.discounts AS csd ON css.discount_id = csd.id
 WHERE EXTRACT(YEAR from date) = 2022
 GROUP BY month, year
@@ -171,21 +169,20 @@ SELECT  csp.person_name as person,
 	    --STRING_AGG((csb.name ||  ' ' || csc.model), ', ') as cars
 		STRING_AGG(CONCAT_WS(' ', csb.name, csc.model), ', ') AS cars
 FROM car_shop.sales AS css
-LEFT JOIN car_shop.brands AS csb ON css.brand_id = csb.id
 LEFT JOIN car_shop.cars AS csc ON css.model_id = csc.id
+LEFT JOIN car_shop.brands AS csb ON csc.brand_id = csb.id
 LEFT JOIN car_shop.persons AS csp ON css.person_id = csp.id
 GROUP BY csp.person_name
 ORDER BY csp.person_name
 ;
 SELECT 
        csc.name AS brand_origin,
-       MAX(price) + (MAX(price) * (MAX(csd.discount_percentage)/100::real))::numeric(9,2) AS price_max, 
-	   MIN(price) + (MIN(price) * (MIN(csd.discount_percentage)/100::real))::numeric(9,2) AS price_min, 
-	   MIN(price),
-	   MIN(csd.discount_percentage)
+	   (MAX(price)/(1-(MAX(csd.discount_percentage)/100::real)))::numeric(9,2) AS price_max, 
+	   (MIN(price) + (1-(MIN(csd.discount_percentage)/100::real)))::numeric(9,2) AS price_min
 FROM car_shop.sales AS css
 INNER JOIN car_shop.discounts AS csd ON css.discount_id = csd.id
-LEFT JOIN car_shop.brands AS csb ON css.brand_id = csb.id
+LEFT JOIN car_shop.cars AS crsc ON css.model_id = crsc.id
+LEFT JOIN car_shop.brands AS csb ON crsc.brand_id = csb.id
 LEFT JOIN car_shop.countrys AS csc ON csb.country_id = csc.id
 WHERE csc.name IS NOT NULL AND csd.discount_percentage >= 1
 GROUP BY csc.name
@@ -193,7 +190,8 @@ GROUP BY csc.name
 SELECT COUNT(person_name) AS persons_from_usa_count
 FROM car_shop.persons AS csp
 LEFT JOIN car_shop.sales AS css ON csp.id = css.person_id
-LEFT JOIN car_shop.brands AS csb ON css.brand_id = csb.id
+LEFT JOIN car_shop.cars AS crsc ON css.model_id = crsc.id
+LEFT JOIN car_shop.brands AS csb ON crsc.brand_id = csb.id
 LEFT JOIN car_shop.countrys AS csc ON csb.country_id = csc.id
 WHERE csc.name = 'USA' AND STRPOS(csp.phone, '+1') = 1
 ;
